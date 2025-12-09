@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 数据文件
+*.pkl
+*.json
+*.csv
+
+# 只跟踪 codes 和 levels
+/*
+!/codes/
+!/levels/
+!/.gitignore
+!README.md
