@@ -22,6 +22,8 @@ build/
 # 只跟踪 codes 和 levels
 /*
 !/codes/
+/codes/CCNFig
 !/levels/
 !/.gitignore
 !README.md
+!*.ipynb
