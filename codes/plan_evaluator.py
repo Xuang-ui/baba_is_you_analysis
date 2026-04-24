@@ -8,7 +8,7 @@ import pandas as pd
 from util import jaccard_similarity
 
 if TYPE_CHECKING:
-    from recorder import Gridmap
+    from recorder import State
     from state_summarizer import StateSummarizer
 
 
@@ -23,7 +23,7 @@ class PlanValueEvaluator:
         """
         self.summarizer = summarizer
     
-    def evaluate_plan_space(self, grid: 'Gridmap') -> Tuple[list, pd.DataFrame, pd.DataFrame]:
+    def evaluate_plan_space(self, grid: 'State') -> Tuple[list, pd.DataFrame, pd.DataFrame]:
         """评估当前网格的所有 ActionPlan，返回 (action_index_list, raw_df, normalized_df)
         
         评估基于每个 plan 的 pre_gamestate，结果存储到 plan 中
@@ -33,7 +33,7 @@ class PlanValueEvaluator:
             raw_df: 包含每个 plan 的原始价值分数的 DataFrame
             normalized_df: 每列使用平均秩归一化到 [0,1] 的 DataFrame
         """
-        from recorder import Gridmap
+        from recorder import State
         grid.expand()
         current_state = self.summarizer.summary(grid)
         action_space = current_state['inter']
@@ -41,7 +41,7 @@ class PlanValueEvaluator:
         action_index_list = []
         
         # 通过 data_manager 访问 managers
-        data_mgr = self.summarizer.data_manager
+        data_mgr = self.summarizer.dm
         
         for target_key in action_space:
             target = data_mgr.target_manager.get(target_key)
@@ -93,7 +93,7 @@ class PlanValueEvaluator:
         plan_key = parent.get('plan_key')
         
         if plan_key:
-            data_mgr = self.summarizer.data_manager
+            data_mgr = self.summarizer.dm
             cached_plan = data_mgr.plan_manager.get(plan_key)
             if cached_plan and cached_plan.get('raw'):
                 # 如果已有评估结果，直接返回
@@ -108,7 +108,7 @@ class PlanValueEvaluator:
             return None
         
         # 从管理器获取数据
-        data_mgr = self.summarizer.data_manager
+        data_mgr = self.summarizer.dm
         pre_state = data_mgr.gamestate_manager.get(pre_state_key)
         post_state = data_mgr.gamestate_manager.get(post_state_key)
         target = data_mgr.target_manager.get(target_key)
@@ -161,7 +161,7 @@ class PlanValueEvaluator:
     
     # ========== 向后兼容 ==========
     
-    def describe_action_space(self, grid: 'Gridmap') -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def describe_action_space(self, grid: 'State') -> Tuple[pd.DataFrame, pd.DataFrame]:
         """[向后兼容] 委托给 evaluate_plan_space，只返回 raw 和 norm"""
         action_index_list, raw, norm = self.evaluate_plan_space(grid)
         return raw, norm

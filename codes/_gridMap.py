@@ -1,4 +1,4 @@
-from codes.base_entity import Entity, EntityType, Coord, Property
+from codes.base_entity import Entity, Material, Coord, Property
 from enum import Enum
 from codes.base_rule import RuleManager, Rule, NounIsNoun, NounIsProperty
 from util import Deque
@@ -226,7 +226,7 @@ class GameEngine:
     # ====== 存储读取 ======
 
     def update_rules(self):
-        self.rule_manager.update_rules()
+        self.rule_manager.update_all_rules()
 
     def quick_save(self):
         record = []
@@ -341,7 +341,7 @@ class GameEngine:
             chain_info = {'chain_list': [], 'finished': False}
             chain_info['finished'] = self._push_chain(you, action, chain_info)
             info['push_chain'].append(chain_info)
-        self.rule_manager.update_rules()
+        self.rule_manager.update_all_rules()
         for tile in self.tiles.values():
             if tile.check_collisions() == GameOutcome.Win:
                 outcome = GameOutcome.Win

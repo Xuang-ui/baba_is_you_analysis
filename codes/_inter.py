@@ -1,6 +1,6 @@
 import os
 import sys
-from recorder import Gridmap
+from recorder import State
 from codes.base_gameLogic import Action, GameOutcome
 from codes.base_rule import RuleManager
 
@@ -10,7 +10,7 @@ class InteractiveGame:
     def __init__(self, map_text=None):
         """初始化游戏"""
         self.map_text = map_text or self.get_default_map()
-        self.grid = Gridmap.from_text(self.map_text)
+        self.grid = State.from_text(self.map_text)
         self.game_state = GameOutcome.Continue
         self.game_over = False
         self.step_count = 0

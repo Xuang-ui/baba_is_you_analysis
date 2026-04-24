@@ -1,6 +1,6 @@
 from ftplib import all_errors
 from numpy.random import f
-from recorder import Gridmap
+from recorder import State
 from codes.base_gameLogic import Tile
 from itertools import combinations
 from collections import defaultdict
@@ -296,7 +296,7 @@ class GridInfo:
                 'reach_change': reach_change}
 
 
-class Analysis(Gridmap):
+class Analysis(State):
     
     @classmethod
     def from_text(cls, text):

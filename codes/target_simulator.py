@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Dict, List, Tuple
 from base_gameLogic import GameOutcome
 
 if TYPE_CHECKING:
-    from recorder import Gridmap, TargetInteraction
+    from recorder import State, TargetInteraction
     from base_gameLogic import Action, Coord
 
 
@@ -33,10 +33,10 @@ class TargetSimulator:
         Returns:
             {plan_idx: gamestate_key} 字典，表示每个 ActionPlan 产生的 GameState
         """
-        from recorder import Gridmap
+        from recorder import State
         
         # 创建模拟用的 grid 副本
-        sim_grid = Gridmap.quick_load(target.gridmap.quick_save())
+        sim_grid = State.quick_load(target.gridmap.quick_save())
         
         # 找到 YOU 实体并移动到起始位置
         you_entities = sim_grid.get_entities_by_prop('YOU')

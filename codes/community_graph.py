@@ -9,7 +9,7 @@ from itertools import combinations
 from util import Deque, PriorityQueue
 
 if TYPE_CHECKING:
-    from recorder import Gridmap
+    from recorder import State
     from base_gameLogic import Coord, Tile
 
 
@@ -108,7 +108,7 @@ class Community(CoordSet):
 class CommunityGraph:
     """社区图类，构建并分析地图中所有社区之间的关系"""
     
-    def __init__(self, gridmap: 'Gridmap'):
+    def __init__(self, gridmap: 'State'):
         self.gridmap = gridmap
         self.initialize()
 
@@ -120,7 +120,7 @@ class CommunityGraph:
     
     def get_community_by_prop(self, prop: str) -> Set:
         """获取具有指定属性的所有社区节点"""
-        entities = self.gridmap.get_entities_by_prop(prop, fast=False)
+        entities = self.gridmap.get_entities_by_prop(prop)
         return {entity.tile.community.nodes for entity in entities if entity.tile.community}
 
     def get_communities(self) -> Dict[str, Community]:

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, List, Tuple, Dict, Any
 from collections import deque
 
 if TYPE_CHECKING:
-    from recorder import Gridmap
+    from recorder import State
     from state_summarizer import StateSummarizer
     from base_gameLogic import GameOutcome
 
@@ -23,7 +23,7 @@ class PuzzleSolver:
         """
         self.summarizer = summarizer
     
-    def bfs_solve(self, start_grid: 'Gridmap', max_depth: int = 10) -> List[List[Tuple[int, int]]]:
+    def bfs_solve(self, start_grid: 'State', max_depth: int = 10) -> List[List[Tuple[int, int]]]:
         """使用 BFS 搜索所有达到胜利状态的路径
         
         Args:
@@ -33,14 +33,14 @@ class PuzzleSolver:
         Returns:
             所有解决方案路径的列表，每条路径是 [(action_sample, action_idx)] 的列表
         """
-        from recorder import Gridmap, TargetInteraction
+        from recorder import State, TargetInteraction
         from base_gameLogic import GameOutcome
         
         # 确保起始状态被索引
         start_key = self.summarizer.compute_hash(start_grid, updating=True)
         
         # 通过 data_manager 访问 managers
-        data_mgr = self.summarizer.data_manager
+        data_mgr = self.summarizer.dm
         
         # BFS 队列: (state_key, path, depth)
         queue = deque([(start_key, [], 0)])
@@ -65,7 +65,7 @@ class PuzzleSolver:
             # 展开当前状态（如果尚未展开）
             if not current_state['inter']['inters']:
                 # 重建 grid 并展开
-                temp_grid = Gridmap(1, 1)
+                temp_grid = State(1, 1)
                 temp_grid.quick_load(current_state['info']['save_tuple'])
                 self.summarizer.expand(temp_grid)
                 current_state = data_mgr.gamestate_manager.get(current_key)
@@ -92,7 +92,7 @@ class PuzzleSolver:
             包含步骤数、动作列表等信息的字典
         """
         # 通过 data_manager 访问 target_manager
-        data_mgr = self.summarizer.data_manager
+        data_mgr = self.summarizer.dm
         
         steps = []
         for action_sample, action_idx in solution_path:

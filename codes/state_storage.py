@@ -10,6 +10,9 @@ import json
 from pathlib import Path
 
 
+# -------------------------
+# StorageBackend - 抽象存储后端
+# -------------------------
 class StorageBackend(ABC):
     """存储后端的抽象基类"""
     
@@ -94,7 +97,7 @@ class JSONBackend(StorageBackend):
     每次 put/delete 操作都会自动保存到文件
     """
     
-    def __init__(self, filepath: str, auto_save: bool = True):
+    def __init__(self, filepath: str, auto_save: bool = False):
         """初始化 JSON 后端
         
         Args:
@@ -190,6 +193,9 @@ class JSONBackend(StorageBackend):
         self._load()
 
 
+# -------------------------
+# IndexManager - 对不同的后端同等的调用
+# -------------------------
 class IndexManager:
     """统一的索引管理器，封装对后端的访问"""
     
@@ -248,115 +254,130 @@ class IndexManager:
             self.backend.put(key, value)
 
 
-# 全局单例管理器（兼容旧代码的过渡方案）
-_gamestate_index_manager: Optional[IndexManager] = None
-_target_index_manager: Optional[IndexManager] = None
-_plan_index_manager: Optional[IndexManager] = None
+# -------------------------
+# DataManager - 统一管理三类索引
+# -------------------------
+class DataManager:
+    """统一的数据管理器，管理 GameState、TargetInteraction、ActionPlan 三类索引"""
 
+    _instance: Optional['DataManager'] = None
 
-def get_state_index_manager() -> IndexManager:
-    """获取全局 GameState 索引管理器（懒初始化）"""
-    global _gamestate_index_manager
-    if _gamestate_index_manager is None:
-        _gamestate_index_manager = IndexManager(InMemoryBackend(), name="gamestate_index")
-    return _gamestate_index_manager
+    def __init__(self, STORAGE_DIR: Optional[str] = None):
+        """初始化三个索引管理器"""
+        if DataManager._instance is not None:
+            raise Exception("DataManager is a singleton! Use get_instance() to get the instance.")
+        self._configure_storage(STORAGE_DIR)
 
-
-def get_action_index_manager() -> IndexManager:
-    """获取全局 TargetInteraction 索引管理器（懒初始化）"""
-    global _target_index_manager
-    if _target_index_manager is None:
-        _target_index_manager = IndexManager(InMemoryBackend(), name="target_index")
-    return _target_index_manager
-
-
-def get_plan_index_manager() -> IndexManager:
-    """获取全局 ActionPlan 索引管理器（懒初始化）"""
-    global _plan_index_manager
-    if _plan_index_manager is None:
-        _plan_index_manager = IndexManager(InMemoryBackend(), name="plan_index")
-    return _plan_index_manager
-
-
-def configure_state_backend(backend: StorageBackend) -> None:
-    """配置 GameState 索引的存储后端"""
-    global _gamestate_index_manager
-    _gamestate_index_manager = IndexManager(backend, name="gamestate_index")
-
-
-def configure_action_backend(backend: StorageBackend) -> None:
-    """配置 TargetInteraction 索引的存储后端"""
-    global _target_index_manager
-    _target_index_manager = IndexManager(backend, name="target_index")
-
-
-def configure_plan_backend(backend: StorageBackend) -> None:
-    """配置 ActionPlan 索引的存储后端"""
-    global _plan_index_manager
-    _plan_index_manager = IndexManager(backend, name="plan_index")
-
-
-def configure_backends(state_backend: StorageBackend, 
-                      action_backend: Optional[StorageBackend] = None,
-                      plan_backend: Optional[StorageBackend] = None) -> None:
-    """同时配置 GameState、TargetInteraction 和 ActionPlan 索引的后端
-    
-    Args:
-        state_backend: GameState 索引后端
-        action_backend: TargetInteraction 索引后端，如果为 None 则使用与 state_backend 相同类型的新实例
-        plan_backend: ActionPlan 索引后端，如果为 None 则使用与 state_backend 相同类型的新实例
-    """
-    configure_state_backend(state_backend)
-    if action_backend is None:
-        action_backend = type(state_backend)()
-    configure_action_backend(action_backend)
-    if plan_backend is None:
-        plan_backend = type(state_backend)()
-    configure_plan_backend(plan_backend)
-
-
-def configure_json_storage(storage_dir: str = './data', 
-                          auto_save: bool = True) -> tuple:
-    """配置所有 manager 使用 JSON 存储
-    
-    Args:
-        storage_dir: 存储目录路径
-        auto_save: 是否在每次修改后自动保存
+    def _configure_storage(self, storage_dir: Optional[str] = None):
         
-    Returns:
-        tuple: (gamestate_backend, target_backend, plan_backend)
-    """
-    storage_path = Path(storage_dir)
-    storage_path.mkdir(parents=True, exist_ok=True)
+        if storage_dir is None:
+            self.gamestate_manager = IndexManager(InMemoryBackend(), name="gamestate_index")
+            self.target_manager = IndexManager(InMemoryBackend(), name="target_index")
+            self.plan_manager = IndexManager(InMemoryBackend(), name="plan_index")
+            return
+        
+        storage_path = Path(storage_dir)
+        storage_path.mkdir(parents=True, exist_ok=True)
+        self.gamestate_manager = IndexManager(JSONBackend(storage_path / 'gamestates.json'), name="gamestate_index")
+        self.target_manager = IndexManager(JSONBackend(storage_path / 'targets.json'), name="target_index")
+        self.plan_manager = IndexManager(JSONBackend(storage_path / 'plans.json'), name="plan_index")
+
+    @classmethod
+    def get_instance(cls) -> 'DataManager':
+        if cls._instance is None:
+            cls._instance = cls.__new__(cls)
+            cls._instance._configure_storage(None)
+        return cls._instance
     
-    gamestate_backend = JSONBackend(storage_path / 'gamestates.json', auto_save=auto_save)
-    target_backend = JSONBackend(storage_path / 'targets.json', auto_save=auto_save)
-    plan_backend = JSONBackend(storage_path / 'plans.json', auto_save=auto_save)
+    def configure_storage_dir(self, storage_dir: str, save: bool = False):
+        """重新配置存储目录"""
+        if save: 
+            self.save_all()
+        self._configure_storage(storage_dir)
+
+    @classmethod
+    def reset_instance(cls):
+        """重置单例实例（用于测试）"""
+        cls._instance = None
     
-    configure_backends(
-        state_backend=gamestate_backend,
-        action_backend=target_backend,
-        plan_backend=plan_backend
-    )
+    def save_all(self):
+        for manager in [self.gamestate_manager, 
+                        self.target_manager,
+                        self.plan_manager]:
+            if isinstance(manager.backend, JSONBackend):
+                manager.backend.save()
+
+    def reload_all(self):
+        for manager in [self.gamestate_manager, 
+                        self.target_manager,
+                        self.plan_manager]:
+            if isinstance(manager.backend, JSONBackend):
+                manager.backend.reload()
+                print(f"Reloaded {len(manager)} items from {manager.backend.filepath}")
+
+    def clear_all(self):
+        for manager in [self.gamestate_manager, 
+                        self.target_manager,
+                        self.plan_manager]:
+            manager.clear()
+            print(f"Cleared all items from {manager.name}")
+
+    def get_gamestate(self, state_key: str):
+        """获取游戏状态摘要"""
+        return self.gamestate_manager.get(state_key)
     
-    return gamestate_backend, target_backend, plan_backend
+    def get_gamestate_ins(self, state_key: str):
+        """获取游戏状态摘要的实例形式"""
+        from recorder import State
+        return State.from_key(state_key)
+    
+    def set_gamestate(self, state_key: str, state_summary: dict):
+        """存储游戏状态摘要"""
+        self.gamestate_manager[state_key] = state_summary
+    
+    def get_target(self, target_key: str):
+        """获取目标交互摘要"""
+        return self.target_manager.get(target_key)
+    
+    def get_target_ins(self, target_key: str):
+        """获取目标交互摘要的实例形式"""
+        from recorder import Interaction
+        return Interaction.from_key(target_key)
+    
+    def set_target(self, target_key: str, target_summary: dict):
+        """存储目标交互摘要"""
+        self.target_manager[target_key] = target_summary
+    
+    def get_plan(self, plan_key: str):
+        """获取动作计划"""
+        return self.plan_manager.get(plan_key)
+    
+    def set_plan(self, plan_key: str, plan_data: dict):
+        """存储动作计划"""
+        self.plan_manager.put(plan_key, plan_data)
+    
+    
+    def __repr__(self):
+        return (f"DataManager(gamestates={len(self.gamestate_manager.keys())}, "
+                f"targets={len(self.target_manager.keys())}, "
+                f"plans={len(self.plan_manager)})")
 
 
-def save_all_data() -> None:
-    """保存所有后端的数据（如果使用的是 JSONBackend）"""
-    for manager in [get_state_index_manager(), 
-                    get_action_index_manager(),
-                    get_plan_index_manager()]:
-        if isinstance(manager.backend, JSONBackend):
-            manager.backend.save()
-            print(f"Saved {len(manager)} items to {manager.backend.filepath}")
+def get_data_manager(storage_dir: Optional[str] = None, save: bool = False) -> DataManager:
+    """获取全局数据管理器实例"""
+    dm = DataManager.get_instance()
+    if storage_dir is not None:
+        dm.configure_storage_dir(storage_dir, save)
+    return dm
 
 
-def reload_all_data() -> None:
-    """重新加载所有后端的数据（如果使用的是 JSONBackend）"""
-    for manager in [get_state_index_manager(), 
-                    get_action_index_manager(),
-                    get_plan_index_manager()]:
-        if isinstance(manager.backend, JSONBackend):
-            manager.backend.reload()
-            print(f"Reloaded {len(manager)} items from {manager.backend.filepath}")
+if __name__ == "__main__":
+    # 简单测试
+    from recorder import State
+    dm = get_data_manager('./recording/tutorial')
+    unit_post = set([dm.get_plan(p)['post_state'] for p in dm.plan_manager.keys() if p.startswith('Unit_')])
+    for i, key in enumerate(unit_post):
+        if (i + 1) % 10 == 0: print(i + 1)
+        State.from_key(key)
+        
+    print(len(unit_post))

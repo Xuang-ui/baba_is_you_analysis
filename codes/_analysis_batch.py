@@ -297,7 +297,7 @@ class BatchAnalyzer:
     
     def analyze_all(self, limit=None, output_file='analysis_results.csv', clear_cache=True, use_multiprocess=False, n_processes=8):
         """分析所有会话（支持多进程）"""
-        from recorder import Gridmap
+        from recorder import State
         from codes._analyzer import GridInfo
         
         # 清空之前的缓存

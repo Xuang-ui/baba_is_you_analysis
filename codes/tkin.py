@@ -6,13 +6,13 @@ import os
 import sys
 import ctypes
 import pandas as pd
-from recorder import Gridmap
+from mdpframework import MapManager, ExperienceManager
+
+from recorder import State
 from plan_evaluator import PlanValueEvaluator
-from codes.base_gameLogic import Action, GameOutcome
-from codes.base_rule import RuleManager, entity_id_to_texture
-from codes._solver import interaction
-from codes.base_entity import Entity
-from codes._analyzer import Analysis
+from base_gameLogic import Action, GameOutcome
+from base_rule import RuleManager
+from base_entity import Entity, Material
 
 def pad_status(text, width=30):
     """
@@ -503,15 +503,58 @@ class ReplayMode:
             GameOutcome.Continue: "🎯 进行中"
         }
         return pad_status(DICT[self.game_state])
-class TkinterGame:
-    """基于tkinter的BABA IS YOU游戏"""
-    def __init__(self, map_text=None):
-        """初始化游戏"""
-        self.map_text = map_text or self.get_default_map()
+    
+class Environment:
+    """游戏环境核心类 - 负责游戏逻辑和状态管理"""
+    
+    def __init__(self, map_name = None, engine=None):
+        """初始化游戏环境"""
+        self.mm = MapManager(engine=engine)
+        # self.em = ExperienceManager()
+        self.grid = self.mm(map_name or 'intro')[1]
+        self.engine = engine or self.mm.engine
+
+        # 创建模式（连接到环境）
+        self.game_mode = GameMode(self)
+        self.analysis_mode = AnalysisMode(self)
+        self.edit_mode = EditMode(self)
+        self.replay_mode = ReplayMode(self)
+        self.current_mode = "game"
         
+
+    def get_grid(self): return self.grid
+    def set_grid(self, grid): self.grid = grid
+    
+    def step(self, action):
+        if isinstance(action, str):
+            action = Action(action)
+        self.grid, state, info = self.grid.step(action)
+        return self.grid, state, info
+    
+    def load_map(self, map_name):
+        self.grid = self.mm._prepare_map(map_name)
+    
+    def create_empty_map(self, width, height):
+        self.map = self.engine(width, height)
+    
+    def save_map(self, map_name):
+        filepath = os.path.join(self.mm.levels_dir, f"{map_name}.txt")
+        if self.grid:
+            map_text = self.grid.save_text()
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(map_text)
+
+
+class Graphic:
+    """图形界面核心类 - 负责所有UI展示"""
+    
+    def __init__(self, environment):
+        """初始化图形界面"""
+        self.env = environment
+        self.current_mode = self.env.current_mode
         # 贴图缓存和路径
         self.texture_cache = {}
-        self.texture_path = os.path.join(os.path.dirname(__file__), 'textures')
+        self.texture_path = os.path.join(os.path.dirname(__file__), 'texture')
         
         # 创建主窗口
         self.root = tk.Tk()
@@ -521,25 +564,667 @@ class TkinterGame:
         
         # 设置样式
         self.setup_styles()
-        
-        # 创建模式
-        self.game_mode = GameMode(self)
-        self.analysis_mode = AnalysisMode(self)
-        self.edit_mode = EditMode(self)
-        self.replay_mode = ReplayMode(self)
-        self.current_mode = "game"  # "game"、"analysis"、"edit"、"replay"
+    
         
         # 创建界面
         self.create_widgets()
         # 绑定键盘事件
         self.bind_events()
         
-        # 初始化网格
-        self.load_grid()
+        # 同步网格
+        self.grid = self.env.get_grid()
         
         # 更新显示
         self.layout = None
         self.update_display()
+
+    def setup_styles(self):
+        """设置样式"""
+        self.colors = {
+            'background': '#2b2b2b',
+            'text': '#ffffff',
+            'coordinate': '#888888',
+            'grid': '#444444'
+        }
+        
+        # 字体设置
+        self.font_large = tkFont.Font(family="Arial", size=14, weight="bold")
+        self.font_medium = tkFont.Font(family="Arial", size=12)
+        self.font_small = tkFont.Font(family="Arial", size=10)
+        
+        # 按钮样式
+        style = ttk.Style()
+        style.configure('Game.TButton', font=self.font_medium)
+    
+    def create_widgets(self):
+        """创建界面组件"""
+        # 主容器
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 创建三个自适应面板
+        self.create_control_panel(main_frame)
+        self.create_game_area(main_frame)
+        self.create_info_panel(main_frame)
+        
+        # 配置grid权重，让面板按比例自适应（2:5:3）
+        main_frame.grid_columnconfigure(0, weight=0, minsize=200)  # 控制面板（固定宽度）
+        main_frame.grid_columnconfigure(1, weight=4)    # 游戏区域（主要区域）
+        main_frame.grid_columnconfigure(2, weight=0, minsize=200)   # 信息面板（固定宽度）
+        main_frame.grid_rowconfigure(0, weight=1)
+    
+    def create_control_panel(self, parent):
+        """创建控制面板（固定宽度）"""
+        control_frame = ttk.LabelFrame(parent, text="🎮 控制面板", padding="10")
+        control_frame.grid(row=0, column=0, sticky=(tk.E,tk.W, tk.N, tk.S), padx=(10, 0))
+
+        # 模式切换
+        mode_frame = ttk.LabelFrame(control_frame, text="模式选择", padding="5")
+        mode_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.mode_var = tk.StringVar(value="game")
+        ttk.Radiobutton(mode_frame, text="游戏模式", variable=self.mode_var,
+                       value="game", command=self.switch_mode, takefocus=0).pack(anchor=tk.W)
+        ttk.Radiobutton(mode_frame, text="分析模式", variable=self.mode_var,
+                       value="analysis", command=self.switch_mode, takefocus=0).pack(anchor=tk.W)
+        ttk.Radiobutton(mode_frame, text="编辑模式", variable=self.mode_var,
+                       value="edit", command=self.switch_mode, takefocus=0).pack(anchor=tk.W)
+        ttk.Radiobutton(mode_frame, text="回放模式", variable=self.mode_var,
+                       value="replay", command=self.switch_mode, takefocus=0).pack(anchor=tk.W)
+
+        # 地图选择
+        map_frame = ttk.LabelFrame(control_frame, text="地图选择", padding="5")
+        map_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Button(map_frame, text="intro", command=self.load_intro_map,
+                  style='Game.TButton', takefocus=0).pack(fill=tk.X, pady=2)
+        ttk.Button(map_frame, text="tutorial", command=self.load_tutorial_map,
+                  style='Game.TButton', takefocus=0).pack(fill=tk.X, pady=2)
+        ttk.Button(map_frame, text="base", command=self.load_base_map,
+                  style='Game.TButton', takefocus=0).pack(fill=tk.X, pady=2)
+        ttk.Button(map_frame, text="target", command=self.load_target_map,
+                  style='Game.TButton', takefocus=0).pack(fill=tk.X, pady=2)
+        ttk.Button(map_frame, text="选择地图", command=self.load_selected_map,
+                  style='Game.TButton', takefocus=0).pack(fill=tk.X, pady=2)
+        ttk.Button(map_frame, text="新建地图", command=self.create_empty_map,
+                  style='Game.TButton', takefocus=0).pack(fill=tk.X, pady=2)
+        ttk.Button(map_frame, text="保存地图", command=self.save_map,
+                  style='Game.TButton', takefocus=0).pack(fill=tk.X, pady=2)
+
+        # 打开动作空间表格（原始/归一化视图）——两个按钮分别显示 raw / norm
+        btn_frame = ttk.Frame(map_frame)
+        btn_frame.pack(fill=tk.X, pady=2)
+        ttk.Button(btn_frame, text="动作空间 (raw)", command=self.open_action_space_raw,
+                  style='Game.TButton', takefocus=0).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,4))
+        ttk.Button(btn_frame, text="动作空间 (norm)", command=self.open_action_space_norm,
+                  style='Game.TButton', takefocus=0).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4,0))
+
+        # 帮助信息
+        help_frame = ttk.LabelFrame(control_frame, height = 10, text="操作帮助", padding="5")
+        help_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.help_label = ttk.Label(help_frame, text=self.get_help_text(), font=self.font_small,
+                                    wraplength=200, justify=tk.LEFT)
+        self.help_label.pack(fill = tk.X, expand=True)
+        
+    def create_game_area(self, parent):
+        """创建游戏区域（自适应宽度）"""
+        game_frame = ttk.LabelFrame(parent, text="🎮 游戏区域", padding="10")
+        game_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=10)
+        
+        # 创建Canvas
+        self.canvas = tk.Canvas(game_frame, bg=self.colors['background'], highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # 绑定Canvas事件
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+    
+    def create_info_panel(self, parent):
+        """创建信息面板（自适应宽度）"""
+        info_frame = ttk.LabelFrame(parent, text="📊 游戏信息", padding="10")
+        info_frame.grid(row=0, column=2, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 10))
+    
+
+        # 游戏状态
+        status_frame = ttk.LabelFrame(info_frame, text="状态信息", padding="5")
+        status_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.status_label = ttk.Label(status_frame, text="准备中...", font=self.font_medium)
+        self.status_label.pack()
+        
+        self.step_label = ttk.Label(status_frame, text="步数: 0", font=self.font_small)
+        self.step_label.pack()
+
+        # 规则显示
+        rules_frame = ttk.LabelFrame(info_frame, text="当前规则", padding="5")
+        rules_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.rules_text = tk.Text(rules_frame, height=6, width=25,
+                                 font=self.font_medium, bg=self.colors['background'],
+                                 fg=self.colors['text'], wrap=tk.WORD)
+        self.rules_text.pack(fill=tk.X)
+        
+
+        
+        # 前置条件信息
+        pre_frame = ttk.LabelFrame(info_frame, text="前置条件", padding="5")
+        pre_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        self.pre_text = tk.Text(pre_frame, height=6, width=25,
+                                font=self.font_medium, bg=self.colors['background'],
+                                fg=self.colors['text'], wrap=tk.WORD)
+        self.pre_text.pack(fill=tk.BOTH, expand=True)
+        
+        # 变化信息
+        cha_frame = ttk.LabelFrame(info_frame, text="变化", padding="5")
+        cha_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        self.cha_text = tk.Text(cha_frame, height=6, width=25,
+                                font=self.font_medium, bg=self.colors['background'],
+                                fg=self.colors['text'], wrap=tk.WORD)
+        self.cha_text.pack(fill=tk.BOTH, expand=True)
+        
+        # 交互信息
+        inter_frame = ttk.LabelFrame(info_frame, text="交互", padding="5")
+        inter_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        self.inter_text = tk.Text(inter_frame, height=6, width=25,
+                                  font=self.font_medium, bg=self.colors['background'],
+                                  fg=self.colors['text'], wrap=tk.WORD)
+        self.inter_text.pack(fill=tk.BOTH, expand=True)
+        
+    def get_help_text(self):
+        """获取帮助文本"""
+        if self.current_mode == "game":
+            return pad_status("键盘快捷键:\nW - 向上移动\nS - 向下移动\nA - 向左移动\nD - 向右移动\n空格 - 等待\nZ - 撤销\nR - 重启\nQ - 退出")
+        elif self.current_mode == "analysis":
+            return pad_status("分析模式操作:\n左键点击 - 选择社区\n再次点击 - 查看路径\n清除高亮 - 重置选择")
+
+        elif self.current_mode == "edit":
+            return pad_status("编辑模式操作:\n左键点击 - 选择并清空\n箭头键 - 移动选中位置\n名词: B(Bone), S(Sun\n对象: b(bone), s(sun)\n属性: 1(Push), 2(You)\n3(Win), 4(Stop), 5(Defeat)\n操作符: 0(IS)")
+
+        elif self.current_mode == "replay":
+            return pad_status("回放模式:\n输入uid和map开始\n自动按CSV动作序列执行")
+        return ""
+    
+    def switch_mode(self):
+        """切换模式"""
+        self.current_mode = self.mode_var.get()
+        
+        if self.current_mode == "game":
+            self.game_mode.set_grid(self.grid)
+            self.analysis_mode.clear_selection()
+        elif self.current_mode == "analysis":
+            self.analysis_mode.set_grid(self.grid)
+        elif self.current_mode == "edit":
+            self.edit_mode.set_grid(self.grid)
+            # 确保画布获取焦点，使方向键/空格仅作用于编辑
+            if hasattr(self, 'canvas'):
+                self.canvas.focus_set()
+        elif self.current_mode == "replay":
+            self.replay_mode.set_grid(self.grid)
+            self.prompt_and_start_replay()
+        
+        # 更新帮助文本
+        self.help_label.config(text=self.get_help_text())
+        self.update_display()
+
+    def prompt_and_start_replay(self):
+        """弹出对话框，输入uid和map，加载地图并开始回放"""
+        try:
+            # Windows下强制切换到英文输入法（US）
+            # self._force_english_ime()
+            uid_str = simpledialog.askstring("回放", "请输入Uid (整数):", parent=self.root)
+            if uid_str is None:
+                return
+            uid = int(uid_str)
+            # 再次确保英文输入
+            # self._force_english_ime()
+            map_name = simpledialog.askstring("回放", "请输入地图名 (例如 intro):", parent=self.root)
+            if not map_name:
+                return
+            # 加载地图
+            filepath = f"levels/{map_name}.txt"
+            self.load_map_from_file(filepath)
+            # 载入动作序列
+            actions, times = self.replay_mode.load_actions(uid, map_name)
+            if not actions:
+                messagebox.showwarning("无动作", "未找到匹配的动作序列")
+                return
+            # 设置replay的grid引用
+            self.replay_mode.set_grid(self.grid)
+            # 开始回放
+            self.replay_mode.start(actions, times)
+        except ValueError:
+            messagebox.showerror("输入错误", "Uid 必须是整数")
+
+    def _force_english_ime(self):
+        """在Windows上将当前线程输入法切换为英文(US)。其他平台无操作。"""
+        try:
+            if sys.platform.startswith('win'):
+                user32 = ctypes.WinDLL('user32', use_last_error=True)
+                # 00000409 对应英语(美国)布局
+                hkl = user32.LoadKeyboardLayoutW('00000409', 1)
+                if hkl:
+                    user32.ActivateKeyboardLayout(hkl, 0)
+        except Exception:
+            # 忽略切换失败，继续正常流程
+            pass
+    
+
+    def update_display(self):
+        """更新显示
+
+        将状态更新提前：先更新状态栏，再绘制地图。这样可以在绘制或更新地图时发生异常或耗时操作
+        时，状态栏仍然能及时反映游戏结果（例如 Defeat/Win）。同时对地图绘制和信息显示
+        添加异常保护，避免单个子步骤抛异常导致整体无法完成状态更新。
+        """
+        # 先更新状态栏（快速）——保证 outcome 等信息能被立即呈现
+        try:
+            self.update_status()
+        except Exception as e:
+            print(f"update_status 出错: {e}")
+
+        # 再绘制游戏区域（可能耗时/出错）
+        try:
+            self.update_game_area()
+        except Exception as e:
+            print(f"update_game_area 出错: {e}")
+
+        # 规则和信息显示也放在后面并用保护块包裹
+        try:
+            self.update_rules()
+        except Exception as e:
+            print(f"update_rules 出错: {e}")
+
+        try:
+            self.update_info_displays()
+        except Exception as e:
+            print(f"update_info_displays 出错: {e}")
+
+    def calculate_layout(self):
+        """计算画布布局参数"""
+        # 检查Canvas尺寸是否已初始化
+        if not hasattr(self, 'canvas_width') or not hasattr(self, 'canvas_height'):
+            if hasattr(self, 'canvas'):
+                # 强制更新Canvas尺寸
+                self.canvas.update_idletasks()
+                self.canvas_width = self.canvas.winfo_width()
+                self.canvas_height = self.canvas.winfo_height()
+                
+                # 如果仍然为0，使用默认值
+                if self.canvas_width <= 0 or self.canvas_height <= 0:
+                    self.canvas_width = 800
+                    self.canvas_height = 600
+            else:
+                return None
+        
+        # 确保尺寸为正数
+        if self.canvas_width <= 0 or self.canvas_height <= 0:
+            print(f"警告: Canvas尺寸无效 width={self.canvas_width}, height={self.canvas_height}")
+            return None
+        # 为坐标轴预留空间
+        coord_space = 30
+        
+        # 计算可用画布尺寸（减去坐标轴空间）
+        available_width = self.canvas_width - coord_space
+        available_height = self.canvas_height - coord_space
+        
+        # 让游戏地图只占据90%的空间
+        map_width = available_width * 0.9
+        map_height = available_height * 0.9
+        
+        # 计算方形格子的尺寸
+        cell_size = min(map_width / self.grid.width, 
+                    map_height / self.grid.height)
+        
+        # 计算实际使用的画布尺寸
+        actual_width = cell_size * self.grid.width
+        actual_height = cell_size * self.grid.height
+        
+        # 计算偏移量（居中显示）
+        offset_x = (self.canvas_width - actual_width) / 2
+        offset_y = (self.canvas_height - actual_height) / 2
+        
+        self.layout = {
+            'coord_space': coord_space,
+            'available_width': available_width,
+            'available_height': available_height,
+            'map_width': map_width,
+            'map_height': map_height,
+            'cell_size': cell_size,
+            'actual_width': actual_width,
+            'actual_height': actual_height,
+            'offset_x': offset_x,
+            'offset_y': offset_y
+        }
+
+    def update_game_area(self):
+        """更新游戏区域显示"""
+        self.canvas.delete("all")
+        self.calculate_layout()
+        self.draw_coordinates(self.layout['offset_x'], self.layout['offset_y'], self.layout['cell_size'])
+        self.draw_grid(self.layout['offset_x'], self.layout['offset_y'], self.layout['cell_size'])
+        self.draw_entities(self.layout['offset_x'], self.layout['offset_y'], self.layout['cell_size'])
+
+    def draw_coordinates(self, offset_x, offset_y, cell_size):
+        """绘制坐标轴"""
+        # 绘制水平坐标（0, 1, 2, 3...）在下方
+        for x in range(self.grid.width):
+            x_pos = offset_x + x * cell_size + cell_size / 2
+            y_pos = offset_y + self.grid.height * cell_size + 20
+            self.canvas.create_text(x_pos, y_pos, text=str(x), 
+                                  font=self.font_small, fill=self.colors['coordinate'])
+        
+        # 绘制垂直坐标（从下到上：0, 1, 2, 3...）
+        for y in range(self.grid.height):
+            x_pos = offset_x - 20
+            # 从下往上数：最下面一行是0，最上面一行是height-1
+            display_y = self.grid.height - 1 - y
+            y_pos = offset_y + y * cell_size + cell_size / 2
+            self.canvas.create_text(x_pos, y_pos, text=str(display_y), 
+                                  font=self.font_small, fill=self.colors['coordinate'])
+    
+    def draw_grid(self, offset_x, offset_y, cell_size):
+        """绘制网格"""
+        # 绘制垂直线
+        for x in range(self.grid.width + 1):
+            x_pos = offset_x + x * cell_size
+            self.canvas.create_line(x_pos, offset_y, x_pos, 
+                                  offset_y + self.grid.height * cell_size,
+                                  fill=self.colors['grid'], width=1)
+        
+        # 绘制水平线
+        for y in range(self.grid.height + 1):
+            y_pos = offset_y + y * cell_size
+            self.canvas.create_line(offset_x, y_pos, 
+                                  offset_x + self.grid.width * cell_size, y_pos,
+                                  fill=self.colors['grid'], width=1)
+    
+    def draw_entities(self, offset_x, offset_y, cell_size):
+        """绘制实体"""
+        for y in range(self.grid.height):
+            for x in range(self.grid.width):
+                # 反转y坐标以匹配print(gridmap)的显示
+                display_y = self.grid.height - 1 - y
+                tile = self.grid.get_tile((x, display_y))
+                if tile and len(tile.entities) > 0:
+                    self.draw_tile_entities(tile, x, y, offset_x, offset_y, cell_size)
+    
+    def draw_tile_entities(self, tile, x, y, offset_x, offset_y, cell_size):
+        """绘制格子中的实体"""
+        x_pos = offset_x + x * cell_size
+        y_pos = offset_y + y * cell_size
+        
+        # 检查是否需要高亮显示
+        coord = (x, self.grid.height - 1 - y)
+        should_highlight = False
+        highlight_color = None
+        
+        if self.current_mode == "analysis":
+            # 获取对应的社区
+            if 'com' in self.grid.observers:
+                com_graph = self.grid.get('com', 'nodes')
+                for com in com_graph:
+                    if coord in com.coords:
+                        if com.id in self.analysis_mode.highlighted_paths:
+                            should_highlight = True
+                            highlight_color = '#276E8B'  # 天蓝色 (SkyBlue)
+                        if com.id in self.analysis_mode.highlighted_coms:
+                            should_highlight = True
+                            highlight_color = '#90862C'  # 卡其色 (Khaki)
+        
+        # 如果需要高亮，先绘制背景
+        if should_highlight:
+            self.canvas.create_rectangle(x_pos, y_pos, x_pos + cell_size, y_pos + cell_size,
+                                       fill=highlight_color, width=0)
+        
+        # 计算实体在格子中的位置
+        if tile.is_single():
+            # 单个实体，居中显示
+            entity = tile.get_first_entity()
+            self.draw_entity(entity, x_pos + cell_size/2, y_pos + cell_size/2, cell_size)
+        elif tile.is_multi():
+            # 多个实体，分区域显示
+            for i, entity in enumerate(tile.get_all_entities()):
+                if i >= 4:
+                    break
+                sub_x = x_pos + (i % 2) * cell_size/2
+                sub_y = y_pos + (i // 2) * cell_size/2
+                self.draw_entity(entity, sub_x + cell_size/4, sub_y + cell_size/4, cell_size/2)
+    
+    def draw_entity(self, entity, x, y, size):
+        """绘制单个实体"""
+        entity_id = entity.get_entity_id()
+        # if entity_id == '.':
+        #     return 
+        # 验证size参数
+        size = max(size, 20)
+        
+        # 尝试加载贴图
+        texture = self.get_entity_texture(entity_id, size)
+        
+        if texture:
+            self.canvas.create_image(x, y, image=texture)
+        else:
+            # 回退到彩色矩形
+            color = self.get_entity_color(entity_id)
+            self.canvas.create_rectangle(x - size/2, y - size/2, 
+                                       x + size/2, y + size/2,
+                                       fill=color, outline='white', width=1)
+    
+    def get_entity_texture(self, entity_id, size):
+        """获取实体贴图"""
+        cache_key = f"{entity_id}_{size}" if size else entity_id
+
+        if cache_key in self.texture_cache:
+            return self.texture_cache[cache_key]
+        
+        try:
+            texture_file = Material(entity_id).texture
+            texture_path = os.path.join(self.texture_path, texture_file)
+            
+            if os.path.exists(texture_path):
+                image = Image.open(texture_path)
+                
+                # 修复：只有当size大于0时才进行resize操作
+                if size and size > 0:
+                    image = image.resize((int(size), int(size)), Image.Resampling.LANCZOS)
+
+                texture = ImageTk.PhotoImage(image)
+                self.texture_cache[cache_key] = texture
+                return texture
+        except Exception as e:
+            print(f"加载贴图失败: {e}, entity_id: {entity_id}, size: {size}")
+            if 'texture_path' in locals():
+                print(f"  texture_path: {texture_path}")
+        
+        return None
+    
+    def get_entity_color(self, entity_id):
+        """获取实体颜色"""
+        colors = {
+            'B': '#ff6b6b', 'C': '#4ecdc4', 'D': '#45b7d1', 'P': '#96ceb4', 'S': '#feca57',
+            'b': '#ff9ff3', 'c': '#54a0ff', 'd': '#5f27cd', 'p': '#00d2d3', 's': '#ff9f43',
+            '0': '#ff6348', '1': '#2ed573', '2': '#1e90ff', '3': '#ffa502', '4': '#ff3838', '5': '#ff6b6b'
+        }
+        return colors.get(entity_id, '#95a5a6')
+    
+    def update_status(self):
+        """更新状态显示"""
+        if self.current_mode == "game":
+            status_text = self.game_mode.get_status()
+        elif self.current_mode == "analysis":
+            status_text = self.analysis_mode.get_status()
+        elif self.current_mode == "edit":
+            status_text = self.edit_mode.get_status()
+        else:
+            status_text = self.replay_mode.get_status()
+        self.status_label.config(text=status_text)
+        self.step_label.config(text=f"步数: {self.game_mode.step_count}")
+    
+    def update_rules(self):
+        """更新规则显示"""
+        # self.grid.update_rules()
+        self.rules_text.delete(1.0, tk.END)
+        rules = self.grid.rule_manager.read_all_rules()
+        for rule in rules:
+            self.rules_text.insert(tk.END, str(rule) + "\n")
+    
+    def update_info_displays(self):
+        """更新信息显示（前置条件、变化、交互）"""
+        try:
+            # 检查是否有必要的属性
+            if not hasattr(self.grid, 'observers') or not hasattr(self.grid, 'add_observer'):
+                # 不是 Analysis 类型，显示提示
+                self.pre_text.delete(1.0, tk.END)
+                self.cha_text.delete(1.0, tk.END)
+                self.inter_text.delete(1.0, tk.END)
+                self.pre_text.insert(tk.END, "仅在Analysis模式可用")
+                self.cha_text.insert(tk.END, "仅在Analysis模式可用")
+                self.inter_text.insert(tk.END, "仅在Analysis模式可用")
+                return
+            
+            # 添加 info observer
+            if 'info' not in self.grid.observers:
+                self.grid.add_observer('info')
+            
+            # 检查 before 状态
+            if self.grid.get('info', 'before') is None:
+                return
+            
+            # 获取 info 数据
+            info = self.grid.get('info', 'info')
+            
+            # 删除旧内容
+            self.pre_text.delete(1.0, tk.END)
+            self.cha_text.delete(1.0, tk.END)
+            self.inter_text.delete(1.0, tk.END)
+            
+            # 插入新内容
+            pre_content = format_info_dict(info.get('pre', {}))
+            cha_content = format_info_dict(info.get('cha', {}))
+            inter_content = format_info_dict(info.get('inter', {}))
+            self.pre_text.insert(tk.END, pre_content)
+            self.cha_text.insert(tk.END, cha_content)
+            self.inter_text.insert(tk.END, inter_content)
+        except Exception as e:
+            # 发生错误时显示错误信息，避免程序卡死
+            error_msg = f"错误: {str(e)[:50]}"
+            try:
+                self.pre_text.delete(1.0, tk.END)
+                self.cha_text.delete(1.0, tk.END)
+                self.inter_text.delete(1.0, tk.END)
+                self.pre_text.insert(tk.END, error_msg)
+                self.cha_text.insert(tk.END, error_msg)
+                self.inter_text.insert(tk.END, error_msg)
+            except:
+                pass  # 如果连显示错误都失败了，就忽略
+
+    def event_to_coord(self, event):
+        """将Canvas点击事件转换为网格坐标"""
+        canvas_x = event.x
+        canvas_y = event.y
+        self.calculate_layout()
+        # 计算点击的格子坐标
+        grid_x = int((canvas_x - self.layout['offset_x']) / self.layout['cell_size'])
+        grid_y = int((canvas_y - self.layout['offset_y']) / self.layout['cell_size'])
+        
+        # 检查是否在有效范围内
+        if 0 <= grid_x < self.grid.width and 0 <= grid_y < self.grid.height:
+            # 修复y坐标反转问题
+            display_y = self.grid.height - 1 - grid_y
+            return (grid_x, display_y)
+        
+        return None
+    
+    def on_canvas_click(self, event):
+        """处理Canvas点击事件"""
+        if self.current_mode == "analysis":
+            coord = self.event_to_coord(event)
+            if coord:
+                status = self.analysis_mode.select_community(coord)
+                self.status_label.config(text=status)
+                self.update_display()  # 不更新status，保持新设置的status
+        elif self.current_mode == "edit":
+            coord = self.event_to_coord(event)
+            if coord:
+                self.edit_mode.select_coord(coord)
+                self.grid = self.edit_mode.grid
+                self.update_display()
+    
+    def on_canvas_configure(self, event):
+        """Canvas尺寸变化事件"""
+        self.canvas_width = event.width
+        self.canvas_height = event.height
+        self.calculate_layout()
+        self.update_display()
+    
+    def bind_events(self):
+        """绑定键盘事件"""
+        # 只在画布上绑定键盘，使方向键/空格不受右栏控件影响
+        self.canvas.focus_set()
+        self.canvas.bind('<KeyPress>', self.on_key_press)
+    
+    def on_key_press(self, event):
+        """处理键盘事件"""
+        if self.current_mode == "game":
+            try:
+                action = Action(event.char.lower())
+                self.game_mode.step(action)
+                # 同步更新TkinterGame的grid引用
+                self.grid = self.game_mode.grid
+                self.update_display()
+            except ValueError:
+                pass
+        elif self.current_mode == "edit":
+            # 编辑模式：处理键盘输入
+            # 过滤特殊按键
+            if event.keysym in ['Shift_L', 'Shift_R', 'Caps_Lock', 'Control_L', 'Control_R', 'Alt_L', 'Alt_R']:
+                return
+            
+            # 处理清空坐标
+            if event.keysym == 'space':
+                self.edit_mode.clear_coord()
+                self.update_display()
+                return
+            
+            # 处理箭头键
+            if event.keysym in ['Up', 'Down', 'Left', 'Right']:
+                direction_map = {'Up': 'up', 'Down': 'down', 'Left': 'left', 'Right': 'right'}
+                direction = direction_map[event.keysym]
+                status = self.edit_mode.move_selection(direction)
+                self.status_label.config(text=status)
+                self.update_display()
+                return
+            
+            # 处理实体输入
+            entity_id = event.char
+            if entity_id:  # 确保不是空字符
+                status = self.edit_mode.add_entity(entity_id)
+                self.status_label.config(text=status)
+                self.grid = self.edit_mode.grid
+                self.update_display()
+
+
+class TkinterGame(Graphic):
+    """兼容旧接口的游戏类"""
+    def __init__(self, map_text=None):
+        """初始化游戏"""
+        # 创建环境
+        self.environment = Environment(map_text)
+        # 初始化图形界面
+        super().__init__(self.environment)
+    
+    def get_default_map(self):
+        """获取默认地图（代理到环境）"""
+        return self.env.get_default_map()
+    
+    def load_grid(self):
+        """加载网格（代理到环境）"""
+        self.env.load_grid()
+        self.grid = self.env.get_grid()
 
     def open_action_space(self):
         """按钮回调：调用 grid.describe_action_space() 并在交互窗口中展示归一化表格（norm）。"""
@@ -993,7 +1678,7 @@ class TkinterGame:
     
     def load_grid(self):
         """加载网格"""
-        self.grid = Analysis.from_text(self.map_text)
+        self.grid = State.from_text(self.map_text)
         
         if self.current_mode == "game":
             self.game_mode.set_grid(self.grid)
@@ -1211,7 +1896,7 @@ class TkinterGame:
             return self.texture_cache[cache_key]
         
         try:
-            texture_file = entity_id_to_texture(entity_id)
+            texture_file = Material(entity_id).texture
             texture_path = os.path.join(self.texture_path, texture_file)
             
             if os.path.exists(texture_path):
@@ -1257,7 +1942,7 @@ class TkinterGame:
         """更新规则显示"""
         # self.grid.update_rules()
         self.rules_text.delete(1.0, tk.END)
-        rules = self.grid.rule_manager.detect_all_rules()
+        rules = self.grid.rule_manager.read_all_rules()
         for rule in rules:
             self.rules_text.insert(tk.END, str(rule) + "\n")
     
@@ -1360,7 +2045,7 @@ class TkinterGame:
         """处理键盘事件"""
         if self.current_mode == "game":
             try:
-                action = Action.from_char(event.char.lower())
+                action = Action(event.char.lower())
                 self.game_mode.step(action)
                 # 同步更新TkinterGame的grid引用
                 self.grid = self.game_mode.grid
@@ -1420,7 +2105,7 @@ class TkinterGame:
                 map_text = f.read().strip()
             
             # 验证地图格式
-            test_grid = Analysis.from_text(map_text)
+            test_grid = State.from_text(map_text)
             self.map_text = map_text
             self.load_grid()
             self.update_display()

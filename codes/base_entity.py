@@ -1,152 +1,131 @@
+import os
+import shutil
+from pathlib import Path
+from typing import TYPE_CHECKING, Dict, Tuple, Union
+from util import encoding, decoding
 
 class Property:
-    FULLDICT =  {
-        -1: 'EMPTY',
-        30000: 'REGULAR', 
-        30001: 'PUSH',
-        30002: 'YOU', 
-        30004: 'STOP',
-        30003: 'WIN',
-        30005: 'DEFEAT',
-        30006: 'SINK',
-        30007: 'HOT',
-        30008: 'MELT',
-        60000: 'REGULAR',
-        60001: 'TEXT'
-    }
-    FULLSET = set(FULLDICT.values())
-    EXISTDICT = set()
 
-    ONEHOTDICT = {'YOU': 0, 'WIN': 1, 'PUSH': 2, 'DEFEAT': 3, 'STOP': 4, 'TEXT': 5, 'REGULAR': 6, 'EMPTY': 7}
-    
-    def __init__(self, items=None):
-        items = items or ['REGULAR']
-        self._props = {self.get_name(item) for item in items}
-        self._regular_check()
-        Property.EXISTDICT.update(self._props)
-    
-    # ====== 获得特定属性 ======
-    def id_to_name(self, id):
-        return self.FULLDICT.get(id, None)
+    VALIDDICT = {'YOU': 0, 'WIN': 1, 'PUSH': 2, 'DEFEAT': 3, 'STOP': 4, 'TEXT': 5, 'REGULAR': 6, 'EMPTY': 7}
+    VALIDLIST = list(VALIDDICT.keys())
+    REGULAR = 1<<VALIDDICT['REGULAR']
+    EMPTY = 1<<VALIDDICT['EMPTY']
+    TEXT = 1<<VALIDDICT['TEXT']
+    STOP = 1<<VALIDDICT['STOP']
 
-    def get_name(self, item):
-        if isinstance(item, int):
-            item = self.id_to_name(item)
-        item = item.upper()
-        assert item in self.FULLSET, 'irregular property'
-        return item
+    # ====== 和字符串列表相互转化 ======
+
+    @classmethod 
+    def from_list(cls, prop_list: list) -> 'Property':
+        return cls(sum(cls.prop2flag(prop) for prop in prop_list))
     
-    # ====== 增减属性 ======
-    def add(self, item):
-        item = self.get_name(item)
-        self._props.add(item)
-        self._regular_check()
-        Property.EXISTDICT.add(item)
-    
-    def remove(self, item):
-        item = self.get_name(item)
-        self._props.remove(item)
-        self._regular_check()
-    
+    @property
+    def prop_lst(self):
+        return [prop for prop, i in Property.VALIDDICT.items() if self._flag & (1 << i)]
+
+
+    # ====== 修改属性 ======
     def clear(self):
-        self._props.clear()
+        self._flag = self.default
         self._regular_check()
     
-    def _regular_check(self):
-        if len(self) == 0:
-            self._props.add('REGULAR')
-        if 'REGULAR' in self._props and len(self) > 1:
-            self._props.remove('REGULAR')
-
-    # ====== 属性判断 ======
-    def has(self, item):
-        if isinstance(item, Property):
-            item = item.get()
+    def add(self, item: Union[str, list]):
         if isinstance(item, list):
-            return all(self.has(i) for i in item)
-        item = self.get_name(item)
-        return item in self._props
+            for i in item:
+                self._flag |= self.prop2flag(i)
+        else:
+            self._flag |= self.prop2flag(item)
+        self._regular_check()
     
-    def get(self):
-        return sorted(self._props)
+    def remove(self, item: Union[str, list]):
+        if isinstance(item, list):
+            for i in item:
+                self._flag &= ~self.prop2flag(i)
+        else:
+            self._flag &= ~self.prop2flag(item)
+        self._regular_check()
     
-    def get_one_hot(self):
-        one_hot = [0] * (len(self.ONEHOTDICT))
-        for prop in self._props:
-            if prop in self.ONEHOTDICT:
-                one_hot[self.ONEHOTDICT[prop]] += 1
-                if prop == 'TEXT':
-                    one_hot[self.ONEHOTDICT['PUSH']] += 1
-                if prop == 'EMPTY':
-                    one_hot[self.ONEHOTDICT['REGULAR']] += 1
-        return ''.join(map(str, one_hot))
+    def update(self, item: 'Property'):
+        self._flag = self.default | item._flag
+        self._regular_check()
+
+    def union(self, item: int):
+        self._flag |= item
+        self._regular_check()
+        return self
     
-    def cal_sim(self, prop):
-        a = self.get_one_hot().split(' ')
-        b = prop.get_one_hot().split(' ')
-        inter = sum(x and y for x, y in zip(a, b))
-        union = sum(x or y for x, y in zip(a, b))
-        return 1.0 if union == 0 else inter / union
+    @classmethod
+    def union_props(cls, props: list) -> 'Property':
+        result_flag = 0
+        for prop in props:
+            flag = prop._flag if isinstance(prop, Property) else prop
+            result_flag |= flag
+        return cls(result_flag)
     
+    # ====== 获取属性 ======
+
     def get_description(self):
-        return ','.join(self.get())
+        return '+'.join(map(str.lower, self.prop_lst))
+    
+    def __len__(self):
+        return len(self.prop_lst)
+    
+    def __contains__(self, item):
+        return bool(self._flag & self.prop2flag(item))
+    
+    def __eq__(self, other):
+        assert isinstance(other, Property), 'other must be a Property'
+        return self._flag == other._flag
+    
+    def __str__(self):
+        return str(self._flag)
     
     def __repr__(self):
         return self.get_description()
     
-    def __len__(self):
-        return len(self._props)
-    
-    def __contains__(self, item):
-        return self.has(item)
-    
-    # ====== 属性标志 ======
-    @property
-    def flag(self):
-        flag, base = 0, 1
-        for property in Property.FULLSET:
-            if property in self._props:
-                flag += base
-            base *= 2
-        return flag
-    
-    def __eq__(self, other):
-        assert isinstance(other, Property), 'other must be a Property'
-        return self.get() == other.get()
-    
-    # ====== 属性合并 ======
-    def __add__(self, other):
-        assert isinstance(other, Property), 'other must be a Property'
-        return Property(self._props | other._props)
-    
     @classmethod
-    def union(cls, instances):
-        props = set()
-        for p in instances:
-            if isinstance(p, str):
-                p = [p]
-            if isinstance(p, list):
-                p = cls(p)
-            assert isinstance(p, cls), 'all instances must be Property'
-            props.update(p._props)
-        return cls(props)
+    def prop2flag(cls, prop: str) -> int:
+        return 1 << cls.VALIDDICT[prop]
+
+    # ====== 内部方法 ======
+    def __init__(self, value: int = 0):
+        self.default = int(value or 0)
+        self.clear()
+
+    def _regular_check(self):
+        if self._flag == 0:
+            self._flag |= self.REGULAR
+        if self._flag != self.REGULAR:
+            self._flag &= ~self.REGULAR
+
     
 class Coord(tuple):
     """坐标类, 继承自tuple, 提供便捷的坐标操作方法"""
     bound = False
-    def __new__(cls, x, y, size=None):
-        """创建新的坐标实例"""
-        if size is not None:
-            width, height = size
-            if not (0 <= x < width and 0 <= y < height):
-                return Boundary()
+    def __new__(cls, coord, size=None):
 
-        return super().__new__(cls, (x, y))
+        width, height = size if size else (float('inf'), float('inf'))
+        if not (0 <= coord[0] < width and 0 <= coord[1] < height):
+            ins = Boundary.__new__(Boundary)
+            ins.__init__()
+            return ins
+        return super().__new__(cls, coord)
     
-    def __init__(self, x, y, size=None):
+    def __init__(self, coord, size=None):
         """初始化坐标"""
-        self.x, self.y = int(x), int(y)
+        self.x, self.y = int(coord[0]), int(coord[1])
         self.size = size
+
+    def set_size(self, size):
+        assert (0 <= self.x < size[0] and 0 <= self.y < size[1]), 'invalid size'
+        self.size = size
+
+    @property
+    def neighbors(self):
+        """返回所有相邻的坐标"""
+        neighbor = [self.left, self.right, self.up, self.down]
+        return [coord for coord in neighbor if coord]
+
     
     def get_x(self):
         return self.x
@@ -155,276 +134,273 @@ class Coord(tuple):
         return self.y
 
     def to_pair(self):
-        """Return this Coord as an (int(x), int(y)) tuple."""
         return (self.x, self.y)
-
-    @classmethod
-    def from_tuple(cls, coord, size=None):
-        """从元组创建坐标"""
-        if isinstance(coord, cls) or isinstance(coord, Boundary):
-            return coord
-        return cls(*coord, size)
-
-    @classmethod
-    def to_pair(cls, coord):
-        """Utility: convert a Coord (or None) to an (x,y) tuple or None.
-
-        Usage: pair = Coord.pair_or_none(c)
-        This replaces common patterns like: (int(c.x), int(c.y)) if c is not None else None
-        """
-        return (int(coord.x), int(coord.y))
 
     @property
     def left(self):
         """返回左边的坐标 (x - 1, y)"""
-        return Coord(self.x - 1, self.y, self.size)
+        return Coord((self.x - 1, self.y), self.size)
     @property
     def right(self):
         """返回右边的坐标 (x + 1, y)"""
-        return Coord(self.x + 1, self.y, self.size)
+        return Coord((self.x + 1, self.y), self.size)
     
     @property
     def up(self):
         """返回上边的坐标 (x, y - 1)"""
-        return Coord(self.x, self.y + 1, self.size)
+        return Coord((self.x, self.y + 1), self.size)
     
     @property
     def down(self):
         """返回下边的坐标 (x, y + 1)"""
-        return Coord(self.x, self.y - 1, self.size)
-    
-    @property
-    def neighbors(self):
-        """返回所有相邻的坐标"""
-        neighbor = [self.left, self.right, self.up, self.down]
-        return [coord for coord in neighbor if coord]
+        return Coord((self.x, self.y - 1), self.size)
 
-    def set_size(self, size):
-        assert self.boundary_check(size), 'size is not valid'
-        self.size = size
-
-    def boundary_check(self, size=None):
-        width, height = size or self.size
-        if not (0 <= self.x < width and 0 <= self.y < height):
-            return False
-        return True
-    
     def manhattan(self, other):
         return abs(self.x - other.x) + abs(self.y - other.y)
-    
-    def __str__(self):
-        """字符串表示"""
-        return f"({self.x},{self.y})"
-    
-    def __repr__(self):
-        """字符串表示"""
-        return f"({self.x},{self.y})"
 
-class Boundary:
+
+class Boundary(Coord):
     bound = True
-    x, y = -1, -1
+    def __new__(cls, coord=None, size=None):
+        return tuple.__new__(cls, (-1, -1))
+    
+    def __init__(self, coord=None, size=None):
+        self.x, self.y, self.size = -1, -1, size
+
+    def __repr__(self): return 'Boundary'
+    def __bool__(self): return False
+    @property
+    def neighbors(self): return None
+    
+    
+class Material:
+
+    OBJECT = 'object'
+    NOUN = 'noun'
+    OPERATOR = 'operator'
+    PROPERTY = 'property'
+    SPECIAL = 'special' # 不需要定义 texture 的entity
+
+    def __init__(self, name):
+        assert name in self.TYPEDICT, f'Irregular material name: {name}'
+        self.type = self.TYPEDICT[name]
+        self.short_name = name
+        self.full_name = self.FULLDICT[self.type][name]
+        self.texture = f"en_{self.type}_{self.full_name}.png"
+
+    def get_description(self):
+        return self.full_name
+
     def __repr__(self):
-        return 'Boundary'
-    def __bool__(self):
-        return False
-    def __eq__(self, other):
-        return isinstance(other, Boundary)
-    def __hash__(self):
-        return hash('Boundary')
+        return self.get_description()
+    def __str__(self):
+        return self.short_name
+
+    # ====== 类型判断与转化 ======
+    def is_text(self):
+        return self.type in [self.NOUN, self.PROPERTY, self.OPERATOR]
+    def is_attribute(self):
+        return self.type in [self.PROPERTY, self.NOUN]
     
-
-
-# class EntityID:
-#     entitydict = None
-
-#     def __call__(self, id):
-#         if self.entitydict is None:
-#             self.load_data()
-#         return self.entitydict.loc[id, ['Type', 'Symbol', 'Texture', 'Sprite']]
+    def is_noun(self):
+        return self.type is self.NOUN
+    def is_object(self):
+        return self.type is self.OBJECT
     
-#     def load_data(self):
-#         ROOT = 'E:/PYTHON项目/BABAISYOU/baba-main-datasample-uniqueid-hz'
-#         sys.path.append(ROOT)
-#         PATH = '../pybaba/entitydict.csv'
-#         EntityID.entitydict = pd.read_csv(PATH, index_col=1)
+    def is_operator(self):
+        return self.type is self.OPERATOR
+    def is_property(self):
+        return self.type is self.PROPERTY
+    def is_special(self):
+        return self.type is self.SPECIAL
 
-class EntityType:
-    OBJECT = 0
-    NOUN = 1
-    OPERATOR = 2
-    PROPERTY = 3
+    def to_noun(self):
+        return self.short_name.upper() if self.is_object() else self.short_name
+    def to_object(self):
+        return self.short_name.lower() if self.is_noun() else self.short_name
 
-    NOUNDICT = {
-        'A': 'Glass',
-        'B': 'Bone',
-        'C': 'Cloud',
-        'D': 'Dice',
-        'F': 'Football',
-        'G': 'Glove',
-        'H': 'Heart',
-        'K': 'Book',
-        'L': 'Lemon',
-        'M': 'Mirror',
-        'N': 'Fan',
-        'P': 'Pumpkin',
-        'S': 'Sun',
-        'W': 'Kiwi',
-        'X': 'Box',
+    # ====== 基本属性 ======
+
+    FULLDICT = {
+        
+        OBJECT: {
+            'a': 'glass',
+            'b': 'bone',
+            'c': 'cloud',
+            'd': 'dice',
+            'f': 'football',
+            'g': 'glove',
+            'h': 'heart',
+            'k': 'book',
+            'l': 'lemon',
+            'm': 'mirror',
+            'n': 'fan',
+            'p': 'pumpkin',
+            's': 'sun',
+            'w': 'kiwi',
+            'x': 'box',
+        }, 
+
+        PROPERTY: {
+            '1': 'PUSH',
+            '2': 'YOU',
+            '4': 'STOP',
+            '3': 'WIN',
+            '5': 'DEFEAT'
+        }, 
+
+        OPERATOR: {
+            '0': 'IS'
+        }, 
+
+        SPECIAL: {
+            '.': 'Empty',
+            '#': 'Bound',
+        }
 
     }
-    OBJECTDICT = {k.lower(): v.lower() for k, v in NOUNDICT.items()}
-    PROPERTYDICT = {
-        '`': 'Regular',
-        '!': 'Text',
-        '#': 'Boundary',
-        '1': 'Push',
-        '2': 'You',
-        '4': 'Stop',
-        '3': 'Win',
-        '5': 'Defeat'
-    }
-    OPERATORDICT = {
-        '0': 'IS'
-    }
-    ATTRIBUTEDICT = {**PROPERTYDICT, **NOUNDICT}
-    TEXTDICT = {**NOUNDICT, **PROPERTYDICT, **OPERATORDICT}
 
+    FULLDICT[NOUN] = {k.upper(): v.upper() for k, v in FULLDICT[OBJECT].items()}
+    TYPEDICT = {name: key for key, value in FULLDICT.items() for name in value.keys()}
+    REBUILD_TEXTURE = False
+
+    @property
+    def default_property(self):
+        if self.is_object():
+            return Property.REGULAR
+        if self.is_text():
+            return Property.TEXT
+        if self.full_name == 'Empty':
+            return Property.EMPTY
+        if self.full_name == 'Bound':
+            return Property.STOP
+
+
+    # ====== 不重要的历史遗留代码 =======
+
+    def noun2object(self):
+        if self.is_noun():
+            return Material(self.short_name.lower())   
+    
+    def object2noun(self):
+        if self.is_object():
+            return Material(self.short_name.upper())
+    
+    @classmethod
+    def initial_from_data(cls, source_dir='textures', target_dir='texture'):
+
+        base_path = Path(__file__).parent
+        source_path, target_path = base_path / source_dir, base_path / target_dir
+        target_path.mkdir(exist_ok=True)
+
+        all_entities = [(id, TYPE, full) for TYPE,DICT in cls.FULLDICT.items() for id, full in DICT.items() if TYPE != cls.SPECIAL]
+        
+        for entity_id, entity_type, full_name in all_entities:
+            src_file = source_path / cls.old_texture(entity_id)
+            dst_file = target_path / f"en_{entity_type}_{full_name.lower()}.png"
+            if src_file.exists(): shutil.copy2(src_file, dst_file)
+
+    if REBUILD_TEXTURE:
+        initial_from_data()
 
     @classmethod
-    def from_char(cls, char):
-        char = char.strip()
-        if char.islower():
-            return cls.OBJECT, cls.OBJECTDICT[char]
-        if char.isupper():
-            return cls.NOUN, cls.NOUNDICT[char]
-        if char in ['0']:
-            return cls.OPERATOR, cls.OPERATORDICT[char]
-        if char in '123456789':
-            return cls.PROPERTY, cls.PROPERTYDICT[char]
-        if char in ['.']:
-            return -1, 'Empty'
-        if char in ['#']:
-            return -1, 'Bound'
-        else:
-            return None
-    @staticmethod
-    def noun2object(noun):
-        return noun.lower()
-    
-    def object2noun(object):
-        return object.upper()
+    def old_texture(cls, name):
+        new = cls(name)
+        if new.type is new.NOUN:
+            return f'en_rule_{new.full_name.lower()}.png'
+        if new.type is new.OBJECT:
+            return f'en_normal_{new.full_name.lower()}.png'
+        if new.type is new.PROPERTY:
+            return f'en_attribute_{new.full_name.lower()}.png'
+        if new.type is new.OPERATOR:
+            return f'en_keyword_{new.full_name.lower()}.png'
 
 
 class Entity:
 
-    def __init__(self, id='.', coord=(0, 0), global_id=None, prop=None):
-
-        self.type, self.full_name = EntityType.from_char(id)
-        self.entity_id = id
-        self.coord = Coord.from_tuple(coord)
-        self.prop = Property(prop)
+    def __init__(self, name: str = '.', coord: Union[tuple, 'Coord'] = (0, 0), 
+                 global_id: int = None, prop: int = None):
 
         self.gridmap, self.tile = None, None
         self.global_id = global_id
 
+        self.material = Material(name)
+        self.coord = Coord(coord)
+        self._prop = Property(self.get_default_property()).union(prop or 0)
+        self._dirty = False
+
+
+
     # ====== 上级操作 ======
-    def gridmap_init(self, gridmap):
-        self.gridmap = gridmap
-        self.coord.set_size((gridmap.width, gridmap.height))
-        self.tile = gridmap.get_tile(self.coord)
+    def get_tile(self): return self.tile
+    def get_gridmap(self): return self.gridmap
+    def get_global_id(self): return self.global_id
 
-        if self.is_text():
-            self.add_prop('TEXT')
-
-    def get_tile(self):
-        return self.tile
+    # ====== 名称操作 ======
+    def get_entity_id(self): return self.material.short_name
+    def get_full_name(self): return self.material.full_name
+    def is_text(self): return self.material.is_text()
+    def get_texture(self): return self.material.texture 
+    def get_identity(self): return 'Text' if self.is_text() else self.get_full_name()
     
-    def get_gridmap(self):
-        return self.gridmap
-    
-    def get_entity_id(self):
-        return self.entity_id
-    
-    def get_full_name(self):
-        return self.full_name
-    
-    # ====== 类型判断 ======
-    def is_text(self):
-        return self.type in [EntityType.NOUN, EntityType.PROPERTY, EntityType.OPERATOR]
-    def is_object(self):
-        return self.type == EntityType.OBJECT
-    def is_operator(self):
-        return self.type == EntityType.OPERATOR
-    def is_property(self):
-        return self.type == EntityType.PROPERTY
-    
-    def get_object_id(self):
-        assert self.is_noun(), 'entity is not a noun'
-        return self.entity_id.lower()
-    
-    def get_noun_id(self):
-        assert self.is_object(), 'entity is not a object'
-        return self.entity_id.upper()
+    def trans_id(self, new_id):
+        new = Entity(new_id, self.get_coord()) 
+        new.mark_prop_dirty()
+        return new
     
     # ====== 坐标操作 ======
-    def get_coord(self):
-        return self.coord
-    
-    def get_x(self):
-        return self.coord.get_x()
-    
-    def get_y(self):
-        return self.coord.get_y()
-    
-    def set_coord(self, coord):
-        self.coord = Coord.from_tuple(coord)
+    def get_coord(self): return self.coord if not self.tile else self.tile.get_coord()
+    def get_x(self): return self.coord.get_x()
+    def get_y(self): return self.coord.get_y()
+    def set_coord(self, coord): self.coord = coord
 
     # ====== 属性操作 ======
-    def get_identity(self):
-        if self.is_text():
-            return 'Text'
-        return self.full_name
+    @property
+    def prop(self):
+        if self._dirty:
+            self.update_prop()
+        return self._prop
 
-    def get_prop(self):
-        return self.prop.get()
-    
-    def get_prop_set(self):
-        return self.prop._props
-    
-    def get_prop_one_hot(self):
-        return self.prop.get_one_hot()
-    
-    def add_prop(self, prop):
-        self.prop.add(prop)
-    
-    def remove_prop(self, prop):
-        self.prop.remove(prop)
-    
-    def has_prop(self, prop):
-        return self.prop.has(prop)
+    def get_prop(self): return self.prop
+    def get_prop_flag(self): return self.prop._flag
+    def get_prop_lst(self): return self.prop.prop_lst
 
-    def clear_prop(self):
-        self.prop.clear()
-        if self.is_text():
-            self.add_prop('TEXT')
+    def get_default_property(self): return self.material.default_property
+    def mark_prop_dirty(self): 
+        self._dirty = True
+        if self.tile is not None:
+            self.tile.mark_dirty()
+
+    def update_prop(self):
+        manager = self.gridmap.get_ruler('np')
+        self._prop.update(manager[self.get_entity_id()])
+        self._dirty = False
+
+    def add_prop(self, prop): self.prop.add(prop)
+    def remove_prop(self, prop): self.prop.remove(prop)
+    def has_prop(self, prop): return prop in self.prop
+    def clear_prop(self): self.prop.clear()
 
     # ====== 存储读取 ======
-    def quick_save(self):
-        return f"{self.global_id}:{self.entity_id},{self.get_x()},{self.get_y()}"
+    def quick_save(self, encoding=True):
+        saving = (self.get_global_id(), self.get_entity_id(), self.get_prop_flag(), self.get_x(), self.get_y())
+        return encoding(saving) if encoding else saving
+    
+    def quick_save_without_coord(self, to_string=True):
+        saving = (self.get_global_id(), self.get_entity_id(), self.get_prop_flag())
+        return encoding(saving) if to_string else saving
 
     @classmethod
     def quick_load(cls, data):
-        global_id, data = data.split(':')
-        entity_id, x, y = data.split(',')
-        return cls(entity_id, Coord(int(x), int(y)), int(global_id))
+        data = decoding(data) if isinstance(data, str) else data
+        global_id, entity_id, flag, x, y = data
+        return cls(str(entity_id), Coord((int(x), int(y))), int(global_id), flag)
     
-    def get_description(self, exact = True):
-        if not exact and self.is_text():
-            return f'@{self.get_coord()}: TEXT [{self.prop.get_description()}]'
-        return f'@{self.get_coord()}: {self.get_full_name()} [{self.prop.get_description()}]'
+    def get_description(self):
+        return f'@{self.get_coord()}: {self.get_full_name()} {self.get_prop_lst()}'
     
     def __str__(self):
-        return self.get_description()
+        return self.quick_save()
     
     def __repr__(self):
         return self.get_description()
@@ -432,17 +408,12 @@ class Entity:
     # ===== 相似度计算 ======
     def cal_sim(self, entity, id_weight = 0.4):
         prop_sim = self.prop.cal_sim(entity.prop)
-        id_sim = 1.0 if self.entity_id == entity.entity_id else 0.0
+        id_sim = 1.0 if self.get_entity_id() == entity.get_entity_id() else 0.0
         return id_weight * id_sim + (1 - id_weight) * prop_sim
     
-    def equal_prop(self, entity):
-        return self.prop == entity.prop
-    
-    def equal_id(self, entity):
-        return self.entity_id == entity.entity_id
-    
-    def equal_global(self, entity):
-        return self.global_id == entity.global_id
+    def equal_prop(self, entity): return self.prop == entity.prop
+    def equal_id(self, entity): return self.get_entity_id() == entity.get_entity_id()
+    def equal_global(self, entity): return self.get_global_id() == entity.get_global_id()
     
     def equal(self, entity):
         return self.equal_prop(entity) and self.equal_id(entity) and self.equal_global(entity)
