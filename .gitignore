@@ -25,5 +25,7 @@ build/
 /codes/CCNFig
 !/levels/
 !/.gitignore
+!/.gitattributes
 !README.md
 !*.ipynb
+!/data/step_level_0420.csv

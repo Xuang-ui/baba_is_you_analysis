@@ -1,4 +1,2 @@
-*.csv*
-git[[:space:]]lfs[[:space:]]track[[:space:]]data/step_level_0420.csv
-git[[:space:]]lfs[[:space:]]track[[:space:]]*.csv* filter=lfs diff=lfs merge=lfs -text
 data/step_level_0420.csv filter=lfs diff=lfs merge=lfs -text
+*.csv filter=lfs diff=lfs merge=lfs -text
