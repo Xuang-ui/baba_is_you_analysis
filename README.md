@@ -1,8 +1,8 @@
 ## 关于baba研究的说明文件
 
 更多对 baba is you 游戏本体的了解，可以参考
-- 游戏原作：Arvi “Hempuli” Teikari, 2019
-- wiki百科：baba is wiki
+- 游戏原作：Arvi “Hempuli” Teikari, 2019 [https://hempuli.com/baba/]
+- wiki百科：baba is wiki [https://babaiswiki.fandom.com/wiki/Baba_Is_You_Wiki]
 
 # menu
 1. 怎么玩这个游戏？
