@@ -17,7 +17,6 @@ build/
 # 数据文件
 *.pkl
 *.json
-*.csv
 
 # 只跟踪 codes 和 levels
 /*
@@ -28,4 +27,7 @@ build/
 !/.gitattributes
 !README.md
 !*.ipynb
+
+!/data/
+/data/*
 !/data/step_level_0420.csv
