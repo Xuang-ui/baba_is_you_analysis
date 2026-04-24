@@ -5,22 +5,29 @@
 - wiki百科：baba is wiki
 
 # menu
-1. 交互式游戏界面
-- tkin.py（迫切需要完善，现在已经是一坨落后版本的屎山）
-- levels, texteures 两个文件夹基本内容
+1. 怎么玩这个游戏？
+- 直接运行 plan_interactive.py 文件
 
-2. 底层逻辑实现
-- base_entity: 基于【Property, Coord, EntityID】三位一体定义 Entity
-- base_gameLogit: 补充 Action, GameOutcome 后基于 Tile 定义 GameEngine
-- base_rule: 基于 Token 定义 Rule 和 RuleManager
+2. 底层逻辑实现 Python 版本的 Baba is you
+- base_entity.py: 基于【Property, Coord, EntityID】三位一体定义 Entity
+- base_gameLogit.py: 补充 Action, GameOutcome 后基于 Tile 定义 GameEngine
+- base_rule.py: 基于 Token 定义 Rule 和 RuleManager
+- texture: 材质包
+- ../levels: 关卡存储
 
-3. 辅助分析和存储
+3. 游戏状态的分析和存储
 - 存储结构和数据类型：recorder.py (数据结构)，state_storage.py (存储结构)
 - state_analyzer.py, state_summarizer.py, state_solver.py(目前没用)
-- trans_summarizer.py, target_simulator.py(目前没用)
+- trans_analyzer.py, trans_summarizer.py, target_simulator.py(目前没用)
 - plan_hierachy.py, plan_summarizer.py, plan_extractor.py（功能过剩）, plan_value_manager.py(目前没用)
+- ../recording: 所有 state, transition 按照关卡存储
 
+4. 真实被试的行为反应
+- ../data: 被试的行为反应数据
+- model_hmm.py: 反应时数据建模
+- work_plan_structure.oy: 动作序列数据建模
 
+## 1.Baba 是一个怎样的游戏 (in process)
 
 ## 2.底层逻辑（base）
 
